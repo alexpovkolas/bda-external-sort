@@ -6,11 +6,11 @@
 
 using namespace std;
 
-#define __PROFILE__
+//#define __PROFILE__
 
 #ifdef __PROFILE__
 
-
+#include <random>
 #include <chrono>
 
 #endif
@@ -25,8 +25,15 @@ void gen_test(item n) {
     ofstream file("input.bin", ios::binary);
     file.write((char *)&n, 8);
 
+    vector<item> items(n);
     for (item i = n; i > 0; i--){
-        file.write((char *)&i, 8);
+        items[i - 1] = i;
+    }
+    auto rng = default_random_engine {};
+    shuffle(begin(items), end(items), rng);
+
+    for (item i = n; i > 0; i--){
+        file.write((char *)&items[i-1], 8);
     }
 
     file.close();
@@ -68,7 +75,7 @@ struct input_chunk {
     inline bool hasNext() {
         if (buffer_offset * item_size < read_size) {
             return true;
-        } else if (file_offset >= file_size * (item_size + 1)) {
+        } else if (file_offset >= (file_size + 1) * item_size) {
             return false;
         } else {
             read_size = get_next_read_size();
@@ -112,6 +119,9 @@ struct output_chunk {
     }
 
     inline void push(item next){
+#ifdef __PROFILE__
+        cout << "Push: "<< next<< endl;
+#endif
         if (buffer_offset * item_size >= block_size) {
             out->seekp(file_offset);
             out->write((char*)block, block_size);
@@ -155,8 +165,10 @@ void external_merge(vector<string> &files, char *buffer, size_t memory_size, con
         for (auto input = inputs.begin(); input != inputs.end() && !inputs.empty();) {
             if (input->hasNext()) {
                 item value = input->next();
+#ifdef __PROFILE__
                 cout << value << endl;
-                if (value < min_value) {
+#endif
+                if (value <= min_value) {
                     min_value = value;
                     min = input;
                     found_min = true;
@@ -205,10 +217,10 @@ void partitial_sort(ifstream &input, char *block, size_t block_size, vector<stri
 
 int main() {
 #ifdef __PROFILE__
-    gen_test(100);
+    gen_test(1000);
 #endif
     //size_t memory_size = 500000 - 1000;
-    size_t memory_size = 35*8;
+    size_t memory_size = 60000*8;
     char *buffer = new char[memory_size];
     vector<string> files;
     ifstream in("input.bin", ios::binary);
