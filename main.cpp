@@ -43,13 +43,15 @@ struct input_chunk {
     size_t block_size;
     size_t chunk_count;
     size_t read_size;
+    size_t item_size = 8;
 
     input_chunk(const string& file, char* block, size_t block_size) {
         in = new ifstream(file, ios::binary);
         this->block = (item *)block;
-        in->read((char *)&(file_size), 8);
-        file_offset = 8;
-        block_size = block_size;
+        in->read((char *)&(file_size), item_size);
+        file_offset = item_size;
+        this->block_size = block_size;
+        buffer_offset = 0;
         chunk_count = 0;
 
         in->seekg(file_offset);
@@ -60,17 +62,16 @@ struct input_chunk {
     }
 
     size_t get_next_read_size() {
-        return file_size - chunk_count * block_size >= block_size ? block_size : file_size - chunk_count * block_size;
+        return file_size * item_size - chunk_count * block_size >= block_size ? block_size : file_size * item_size - chunk_count * block_size;
     }
 
     inline bool hasNext() {
-        if (buffer_offset < read_size) {
+        if (buffer_offset * item_size < read_size) {
             return true;
-        } else if (file_offset == file_size + 8) {
+        } else if (file_offset >= file_size * (item_size + 1)) {
             return false;
         } else {
             read_size = get_next_read_size();
-            file_offset += read_size;
             in->seekg(file_offset);
             in->read((char*)block, read_size);
             file_offset += read_size;
@@ -85,8 +86,8 @@ struct input_chunk {
         return block[buffer_offset];
     }
 
-    inline item move(){
-        return buffer_offset++;
+    inline void move(){
+        buffer_offset++;
     }
 };
 
@@ -94,42 +95,48 @@ struct output_chunk {
 
     ofstream *out;
     item *block;
-    size_t size;
     size_t block_size;
     size_t file_offset;
     size_t buffer_offset;
+    size_t item_size = 8;
+    size_t total_size;
 
     output_chunk(const string& file, char* block, size_t block_size, size_t total_size) {
         out = new ofstream(file, ios::binary);
         this->block = (item*)block;
         this->block_size = block_size;
-        out->write((char *)&total_size, 8);
-        file_offset = 8;
+        out->write((char *)&total_size, item_size);
+        file_offset = item_size;
         buffer_offset = 0;
+        this->total_size = total_size;
     }
 
     inline void push(item next){
-        if (buffer_offset < block_size) {
-            block[buffer_offset++] = next;
-        } else {
+        if (buffer_offset * item_size >= block_size) {
             out->seekp(file_offset);
-            out->write((char*)buffer_offset, block_size);
+            out->write((char*)block, block_size);
             buffer_offset = 0;
             file_offset += block_size;
         }
+
+        block[buffer_offset++] = next;
     }
 
     void close() {
-        out->seekp(file_offset);
-        out->write((char*)buffer_offset, buffer_offset);
-        out->close();
+        if ((total_size + 1) * item_size > file_offset) {
+            out->seekp(file_offset);
+            out->write((char*)block, buffer_offset * item_size);
+            out->close();
+        }
+
     }
 };
 
-void external_merge(vector<string> &files, char *buffer, size_t memory_size, const string &out_file) {
+void external_merge(vector<string> &files, char *buffer, size_t memory_size, const string &out_file, size_t item_size) {
     vector<input_chunk> inputs;
 
     size_t block_size = floor((double)memory_size / (files.size() + 1));
+    block_size = floor(block_size / 8) * 8;
 
     size_t total_size = 0;
     for (int i = 0; i < files.size(); ++i) {
@@ -141,14 +148,18 @@ void external_merge(vector<string> &files, char *buffer, size_t memory_size, con
 
 
     while (!inputs.empty()) {
-        item min_value;
+
         auto min = inputs.begin();
-        for (auto input = inputs.begin(); input != inputs.end();) {
+        item min_value = LONG_LONG_MAX;
+        bool found_min = false;
+        for (auto input = inputs.begin(); input != inputs.end() && !inputs.empty();) {
             if (input->hasNext()) {
                 item value = input->next();
+                cout << value << endl;
                 if (value < min_value) {
                     min_value = value;
                     min = input;
+                    found_min = true;
                 }
                 ++input;
             } else {
@@ -156,18 +167,22 @@ void external_merge(vector<string> &files, char *buffer, size_t memory_size, con
             }
         }
 
-        output.push(min_value);
-        min->move();
+        if (found_min) {
+            output.push(min_value);
+            min->move();
+        }
+
     }
 
     output.close();
 }
 
-void partitial_sort(ifstream &input, char *block, size_t block_size, vector<string> &files) {
+void partitial_sort(ifstream &input, char *block, size_t block_size, vector<string> &files, size_t item_size) {
     item size = 0;
-    input.read((char *)&size, 8);
+    input.read((char *)&size, item_size);
+    size *= item_size;
 
-    size_t size_offset = 8;
+    size_t size_offset = item_size;
 
     size_t blocks_count = ceil((double)size / block_size);
     for (int i = 0; i < blocks_count; ++i) {
@@ -176,10 +191,11 @@ void partitial_sort(ifstream &input, char *block, size_t block_size, vector<stri
         input.seekg(offset);
         input.read(block, bytes_to_read);
 
-        sort(block, block + bytes_to_read);
+        sort((item*)block, (item*)block + bytes_to_read / item_size);
         string out_file = "output_" + to_string(i);
         ofstream file(out_file, ios::binary);
-        file.write((char *)&bytes_to_read, 8);
+        item items_count = floor(bytes_to_read / item_size);
+        file.write((char *)&(items_count), 8);
         file.write(block, bytes_to_read);
         file.close();
 
@@ -192,13 +208,13 @@ int main() {
     gen_test(100);
 #endif
     //size_t memory_size = 500000 - 1000;
-    size_t memory_size = 30;
+    size_t memory_size = 35*8;
     char *buffer = new char[memory_size];
     vector<string> files;
     ifstream in("input.bin", ios::binary);
 
-    partitial_sort(in, buffer, memory_size, files);
-    external_merge(files, buffer, memory_size, "output.bin");
+    partitial_sort(in, buffer, memory_size, files, 8);
+    external_merge(files, buffer, memory_size, "output.bin", 8);
 
     return 0;
 }
