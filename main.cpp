@@ -6,7 +6,7 @@
 
 using namespace std;
 
-#define __PROFILE__
+//#define __PROFILE__
 
 #ifdef __PROFILE__
 
@@ -220,7 +220,7 @@ int main() {
     gen_test(5);
 #endif
     //item memory_size = 500000 - 1000;
-    item memory_size = 60000*8;
+    item memory_size = 30000*8;
     char *buffer = new char[memory_size];
     vector<string> files;
     ifstream in("input.bin", ios::binary);
